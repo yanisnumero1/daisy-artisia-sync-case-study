@@ -1,9 +1,56 @@
 import { createServer } from "node:http";
 
 const port = 4010;
-const scenario = process.env.ARTISIA_MOCK_SCENARIO ?? "success";
+const allowedScenarios = new Set(["success", "conflict", "error", "slow"]);
+
+let scenario = process.env.ARTISIA_MOCK_SCENARIO ?? "success";
+let bookingRequestCount = 0;
+
+function sendJson(response, status, body) {
+  response.writeHead(status, { "Content-Type": "application/json" });
+  response.end(JSON.stringify(body));
+}
+
+async function readJson(request) {
+  const chunks = [];
+
+  for await (const chunk of request) {
+    chunks.push(chunk);
+  }
+
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
 
 const server = createServer(async (request, response) => {
+  // Integration tests use this local-only route to change the mock behavior.
+  if (request.method === "PUT" && request.url === "/__scenario") {
+    try {
+      const body = await readJson(request);
+
+      if (!allowedScenarios.has(body.scenario)) {
+        sendJson(response, 400, { error: "Unknown scenario" });
+        return;
+      }
+
+      scenario = body.scenario;
+      bookingRequestCount = 0;
+      sendJson(response, 200, { scenario });
+    } catch {
+      sendJson(response, 400, { error: "Invalid JSON" });
+    }
+
+    return;
+  }
+
+  // This route lets tests verify that Daisy did not retry a booking POST.
+  if (request.method === "GET" && request.url === "/__state") {
+    sendJson(response, 200, {
+      scenario,
+      bookingRequestCount,
+    });
+    return;
+  }
+
   const isBookingRequest =
     request.method === "POST" &&
     /^\/v1\/sessions\/[^/]+\/bookings$/.test(request.url ?? "");
@@ -15,10 +62,11 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.headers.authorization !== "Bearer test-api-key") {
-    response.writeHead(401, { "Content-Type": "application/json" });
-    response.end(JSON.stringify({ error: "Invalid API key" }));
+    sendJson(response, 401, { error: "Invalid API key" });
     return;
   }
+
+  bookingRequestCount += 1;
 
   // The slow scenario exceeds Daisy's seven-second timeout.
   if (scenario === "slow") {
@@ -26,8 +74,7 @@ const server = createServer(async (request, response) => {
   }
 
   if (scenario === "conflict") {
-    response.writeHead(409, { "Content-Type": "application/json" });
-    response.end(JSON.stringify({ error: "Not enough seats" }));
+    sendJson(response, 409, { error: "Not enough seats" });
     return;
   }
 
@@ -37,15 +84,14 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  response.writeHead(201, { "Content-Type": "application/json" });
-  response.end(
-    JSON.stringify({
-      booking_id: "art_bk_mock_001",
-      status: "confirmed",
-    }),
-  );
+  sendJson(response, 201, {
+    booking_id: "art_bk_mock_001",
+    status: "confirmed",
+  });
 });
 
 server.listen(port, "0.0.0.0", () => {
-  console.log(`Mock Artisia is running on port ${port} with scenario: ${scenario}`);
+  console.log(
+    `Mock Artisia is running on port ${port} with scenario: ${scenario}`,
+  );
 });

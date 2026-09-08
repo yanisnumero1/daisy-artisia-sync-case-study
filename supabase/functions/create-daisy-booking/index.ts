@@ -47,10 +47,31 @@ Deno.serve(async (request) => {
     })
     .single();
 
-  if (reserveError) {
-    const isCapacityConflict = reserveError.message.includes("Not enough seats");
-    return json({ error: isCapacityConflict ? "Not enough seats" : "Unable to reserve slot" }, isCapacityConflict ? 409 : 400);
+ if (reserveError) {
+  const isCapacityConflict = reserveError.message.includes("Not enough seats");
+
+  if (isCapacityConflict) {
+    return json({ error: "Not enough seats" }, 409);
   }
+
+  const isPartnerUnavailable = reserveError.message.includes(
+    "Partner synchronization unavailable",
+  );
+
+  if (isPartnerUnavailable) {
+    // A degraded partner state pauses new sales without creating a booking.
+    return json(
+      {
+        status: "unavailable",
+        message:
+          "La disponibilité de ce créneau est en cours de vérification. Veuillez réessayer plus tard.",
+      },
+      503,
+    );
+  }
+
+  return json({ error: "Unable to reserve slot" }, 400);
+}
 
   const { data: publication, error: publicationError } = await supabase
     .from("slot_partners")

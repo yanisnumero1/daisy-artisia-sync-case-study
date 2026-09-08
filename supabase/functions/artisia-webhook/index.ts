@@ -33,13 +33,22 @@ async function isValidSignature(rawBody: string, received: string | null, secret
 }
 
 Deno.serve(async (request) => {
-  if (request.method !== "POST") return response({ error: "Method not allowed" }, 405);
+  if (request.method !== "POST") {
+    return response({ error: "Method not allowed" }, 405);
+  }
+
+  const webhookSecret = Deno.env.get("ARTISIA_WEBHOOK_SECRET");
+
+  if (!webhookSecret) {
+    //Without this secret, Daisy cannot verify that the webhook really comes from Artisia.
+    return response({ error: "Webhook secret is not configured" }, 500);
+  }
 
   const rawBody = await request.text();
   const valid = await isValidSignature(
     rawBody,
     request.headers.get("X-Artisia-Signature"),
-    Deno.env.get("ARTISIA_WEBHOOK_SECRET")!,
+    webhookSecret,
   );
   if (!valid) return response({ error: "Invalid signature" }, 401);
 

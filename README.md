@@ -1,29 +1,44 @@
 # Daisy — Artisia availability synchronization
 
-Take-home case study for **Sujet A : synchroniser sans jamais surréserver**.
+Take-home case study for **Sujet A: synchroniser sans jamais surréserver**.
 
-The implementation is deliberately focused on the domain service rather than a full Next.js screen. The important behavior is executable and tested; the partner is represented by `MockArtisia`.
+The project contains two complementary implementations:
+
+- a small in-memory domain model for fast unit tests;
+- a persistent Supabase implementation with PostgreSQL migrations, Edge Functions and HTTP integration tests.
+
+Artisia is represented by a configurable local HTTP mock that reproduces successful responses, conflicts, server errors and timeouts.
 
 ## Run
 
+Prerequisites: Node.js, Docker Desktop and the Supabase CLI.
+
 ```bash
 npm install
+cp supabase/.env.example supabase/.env.local
+supabase start
 npm test
+npm run test:integration
 npm run typecheck
 ```
+
+`npm test` runs the fast domain tests. `npm run test:integration` resets the local Supabase database, starts the Artisia mock and Edge Functions, then verifies the complete HTTP and PostgreSQL flow.
 
 ## Decisions
 
 ### Source of truth and data model
 
-The real implementation would use PostgreSQL with the following tables:
+TPostgreSQL is the persistent source of truth. The Supabase migrations create:
 
-- `slots`: Daisy slot, capacity, Artisia session id, partner sync state;
-- `bookings`: source (`daisy` or `artisia`), seats, source booking id, status;
-- `webhook_events`: unique `event_id`, signature result, received/processed timestamps;
-- `sync_conflicts`: ambiguous requests and external overbooking cases requiring attention.
+- `slots`: Daisy slots and their local capacity;
+- `slot_partners`: external publications and synchronization state;
+- `bookings`: Daisy and Artisia reservations with their current status;
+- `webhook_events`: signed partner events protected by a unique event identifier;
+- `sync_conflicts`: ambiguous or external overbooking cases requiring artisan review.
 
-The in-memory `Store` mirrors those concepts. A PostgreSQL implementation would protect a slot with a transaction and `SELECT ... FOR UPDATE`, plus unique constraints on `(partner_id, source_booking_id)` and `webhook_events.event_id`.
+The `reserve_daisy_seats` PostgreSQL function locks the slot with `SELECT ... FOR UPDATE`, checks partner health and remaining capacity, then creates the local hold in the same transaction.
+
+The in-memory `Store` mirrors the same concepts and remains useful for fast domain tests. The Supabase implementation validates the behavior with real transactions, constraints, Edge Functions and HTTP calls.
 
 ### Two people take the last seat
 
@@ -65,24 +80,34 @@ The endpoint is explicitly non-idempotent. A timeout means the request may have 
 
 Implemented:
 
-- local-to-partner booking flow;
-- slot-level serialization;
-- partner conflicts;
-- uncertain timeout/500 state;
-- signed, duplicate-safe webhooks;
-- external booking conflicts;
-- aggregate reconciliation;
-- tests for these behaviors.
+- persistent PostgreSQL schema and constraints;
+- atomic local booking holds with slot-level locking;
+- Daisy-to-Artisia booking Edge Function;
+- signed and duplicate-safe Artisia webhook Edge Function;
+- partner conflict and uncertain booking states;
+- stale webhook protection;
+- local HTTP mock for `201`, `409`, `500` and timeout scenarios;
+- deterministic local seed data;
+- nine fast domain tests;
+- five full Supabase integration tests.
 
 Not implemented in this focused exercise:
 
-- a Next.js UI;
-- persistent PostgreSQL adapter;
-- a real queue/worker;
-- multiple partners and per-partner credentials;
-- automated resolution of aggregate discrepancies, which Artisia's API does not make safely possible.
+- a Next.js user interface;
+- a production queue or scheduled reconciliation worker;
+- encrypted per-workshop partner credential storage;
+- customer email notifications;
+- an artisan interface for reviewing and resolving conflicts;
+- automatic resolution when Artisia only exposes an aggregate booking count.
 
-These would be the next increments after validating the domain behavior.
+These are deliberate product increments rather than hidden assumptions. The current implementation focuses on the synchronization rules and the failure modes that can lead to overbooking.
+
+## Automated verification
+
+```bash
+npm test
+npm run test:integration
+npm run typecheck
 
 ## Production evolution
 

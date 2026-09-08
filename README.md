@@ -26,6 +26,8 @@ npm run typecheck
 
 `npm run test:integration` réinitialise la base Supabase locale, démarre le mock Artisia et les Edge Functions, puis vérifie le parcours complet entre les appels HTTP et PostgreSQL.
 
+`npm run test:webhook` Les tests du webhook vérifient les signatures, les doublons, l’ordre des événements et les conflits externes 
+
 `npm run typecheck` vérifie les types TypeScript sans générer de fichiers.
 
 ## Décisions techniques
@@ -158,7 +160,7 @@ Ce comportement privilégie la cohérence des réservations plutôt qu’une con
 - un serveur mock Artisia pour simuler les réponses `201`, `409`, `500` et les délais d’attente dépassés ;
 - des données locales reproductibles grâce au fichier `seed.sql` ;
 - neuf tests rapides de la logique métier ;
-- cinq tests d’intégration avec Supabase, PostgreSQL, les Edge Functions et le mock Artisia.
+- dix tests d’intégration répartis entre le parcours de réservation et le traitement des webhooks.
 
 ### Éléments volontairement laissés hors périmètre
 
@@ -184,6 +186,12 @@ Les tests d’intégration réinitialisent Supabase et vérifient le parcours co
 
 ```bash
 npm run test:integration
+```
+
+Les tests du webhook vérifient les signatures, les doublons, l’ordre des événements et les conflits externes :
+
+```bash
+npm run test:webhook
 ```
 
 La vérification TypeScript s’exécute sans générer de fichiers :

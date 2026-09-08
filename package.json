@@ -2,12 +2,13 @@
   "name": "daisy-artisia-sync-case-study",
   "private": true,
   "type": "module",
-"scripts": {
-  "test": "vitest run",
-  "test:watch": "vitest",
-  "test:integration": "node --test tests/integration/create-daisy-booking.integration.mjs",
-  "typecheck": "tsc --noEmit"
-},
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "node --test tests/integration/create-daisy-booking.integration.mjs",
+    "typecheck": "tsc --noEmit",
+    "test:webhook": "node --test tests/integration/artisia-webhook.integration.mjs"
+  },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "postgres": "^3.4.9",

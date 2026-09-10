@@ -265,7 +265,7 @@ Subsequent reconciliation is a planned persistent recovery step. Automatic confi
 - An Artisia HTTP mock simulating `201`, `409`, `500`, and timeouts.
 - Reproducible local data through `seed.sql`.
 - Nine fast business logic tests.
-- Ten integration tests across booking and webhook flows.
+- Sixteen integration tests across booking and webhook flows.
 
 ### Intentionally outside scope
 
@@ -280,6 +280,8 @@ Subsequent reconciliation is a planned persistent recovery step. Automatic confi
 These are possible product and technical extensions. The exercise focuses on synchronization rules and failures that could lead to overbooking.
 
 ## Automated verification
+
+See [scenario coverage](docs/scenario-coverage.md) for the tested behaviors and remaining limitations.
 
 Run the fast in-memory business logic tests:
 

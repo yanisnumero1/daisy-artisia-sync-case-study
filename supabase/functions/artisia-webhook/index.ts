@@ -6,6 +6,7 @@ function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: jsonHeaders });
 }
 
+/** Verifies the exact raw body; parsing or re-serializing it first would change the HMAC. */
 async function isValidSignature(rawBody: string, received: string | null, secret: string) {
   if (!received?.startsWith("sha256=")) return false;
   const expectedBytes = await crypto.subtle.sign(
@@ -32,6 +33,11 @@ async function isValidSignature(rawBody: string, received: string | null, secret
   return difference === 0;
 }
 
+/**
+ * Authenticates and validates an event before durable storage and transactional processing.
+ * A non-2xx response requests redelivery; a stored event also remains available to recovery.
+ * The shared database deadline bounds lock contention without acknowledging unfinished work.
+ */
 Deno.serve(async (request) => {
   if (request.method !== "POST") {
     return response({ error: "Method not allowed" }, 405);

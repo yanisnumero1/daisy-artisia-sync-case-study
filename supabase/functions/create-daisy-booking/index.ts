@@ -5,6 +5,11 @@ const headers = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Head
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
 const uncertain = () => json({ status: "uncertain", message: "Veuillez patienter. Nous vérifions votre demande avant de la confirmer." }, 202);
 
+/**
+ * Holds inventory transactionally before making one non-idempotent partner POST.
+ * Confirmation links an exact partner ID under the slot lock; an earlier cancellation
+ * remains authoritative. Ambiguous outcomes keep inventory held for recovery/review.
+ */
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers });
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -76,9 +81,11 @@ Deno.serve(async (request) => {
   }
 });
 
+/** Changes a pending hold under the slot lock; already finalized bookings are preserved. */
 async function markBooking(db: Database, id: string, status: string) {
   await rpc(db, "set_daisy_booking_state", { p_booking_id: id, p_status: status });
 }
+/** Atomically keeps the hold and pauses the publication through the database transition. */
 async function markUncertain(db: Database, id: string, _slotId: string) {
   await markBooking(db, id, "uncertain");
 }

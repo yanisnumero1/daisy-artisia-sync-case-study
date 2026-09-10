@@ -3,6 +3,7 @@
 const base = process.env.SUPABASE_URL ?? "http://127.0.0.1:54321";
 const token = process.env.ARTISIA_RECOVERY_TOKEN;
 if (!token) throw new Error("ARTISIA_RECOVERY_TOKEN is required");
+/** Invokes one recovery pass; database scheduling decides whether a partner GET is due. */
 async function run() {
   const response = await fetch(`${base}/functions/v1/reconcile-artisia`, {
     method: "POST", headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(45_000),

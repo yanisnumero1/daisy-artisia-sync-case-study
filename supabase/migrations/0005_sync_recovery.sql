@@ -1,6 +1,7 @@
 -- Add recovery support without rewriting historical bookings.
 -- Slot locking serializes partner identity and event ordering decisions.
 alter table public.slots add column sync_version bigint not null default 0;
+-- Invalidates snapshots when booking inventory changes; comparisons use this local version.
 create function public.bump_slot_sync_version() returns trigger language plpgsql
 set search_path = public as $$
 begin
@@ -15,6 +16,7 @@ $$;
 create trigger bookings_sync_version after insert or update or delete on public.bookings
 for each row execute function public.bump_slot_sync_version();
 
+-- Retains one open issue per reason when invoked under the caller-held slot lock.
 create function public.record_sync_issue(p_slot_id uuid, p_event_id text, p_reason text)
 returns void language sql security invoker set search_path = public as $$
   -- Callers hold the slot lock, so this check is serialized across processors.
@@ -98,6 +100,7 @@ $$;
 -- Preserve the echo as an audit row, but exclude it from inventory after linking
 -- the exact partner ID. No heuristic matching and no deletion of booking history.
 alter table public.bookings add column merged_into uuid references public.bookings(id);
+-- Finalizes only an exact partner identity; conflicting IDs or seat counts abort the transaction.
 create function public.finish_artisia_booking(p_booking_id uuid, p_partner_booking_id text)
 returns text language plpgsql security invoker set search_path = public as $$
 declare
@@ -147,6 +150,8 @@ create table public.artisia_request_windows (
   key_id text primary key, minute_start timestamptz not null, used integer not null, blocked_until timestamptz
 );
 alter table public.artisia_request_windows enable row level security;
+-- Atomically claims at most 60 calls per key and calendar minute.
+-- p_now is injectable for deterministic boundary tests; this RPC is server-only.
 create function public.take_artisia_request(p_key_id text, p_now timestamptz default clock_timestamp())
 returns boolean language plpgsql security invoker set search_path = public as $$
 declare w public.artisia_request_windows;
@@ -164,6 +169,7 @@ begin
   return true;
 end;
 $$;
+-- Shares a received 429 cooldown across all callers using this key fingerprint.
 create function public.block_artisia_key(p_key_id text) returns void
 language sql security invoker set search_path = public as $$
   update public.artisia_request_windows set blocked_until = date_trunc('minute', clock_timestamp()) + interval '1 minute' where key_id = p_key_id;
@@ -173,6 +179,7 @@ create table public.artisia_recovery (
   failures integer not null default 0, last_error text, last_success_at timestamptz
 );
 alter table public.artisia_recovery enable row level security;
+-- Claims a one-minute recovery lease; a crashed worker becomes eligible again after expiry.
 create function public.claim_artisia_recovery(p_key_id text) returns boolean
 language plpgsql security invoker set search_path = public as $$
 begin
@@ -182,6 +189,8 @@ begin
   return found;
 end;
 $$;
+-- Persists success or exponential backoff (capped at twenty minutes).
+-- A rate limit uses the next full minute; a failure also pauses this deployment's healthy publications.
 create function public.finish_artisia_recovery(p_key_id text, p_error text default null, p_rate_limited boolean default false)
 returns void language sql security invoker set search_path = public as $$
   update public.artisia_recovery set
@@ -197,6 +206,8 @@ returns void language sql security invoker set search_path = public as $$
   update public.slot_partners set sync_status = 'degraded'
   where partner = 'artisia' and sync_status = 'healthy' and p_error is not null;
 $$;
+-- Compares a validated partner snapshot under the slot lock and rejects outdated local versions.
+-- No individual booking is inferred from totals; uncertainty and unrelated conflicts keep sales paused.
 create function public.reconcile_artisia_session(p_session jsonb, p_version bigint)
 returns text language plpgsql security invoker set search_path = public as $$
 declare s public.slots; known integer; ambiguous boolean; v_reason text;
@@ -241,6 +252,7 @@ grant execute on function public.record_sync_issue(uuid,text,text), public.finis
   public.take_artisia_request(text,timestamptz), public.block_artisia_key(text), public.claim_artisia_recovery(text),
   public.finish_artisia_recovery(text,text,boolean), public.reconcile_artisia_session(jsonb,bigint) to service_role;
 
+-- Serializes failure transitions with webhook/finalization updates using the same lock order.
 create function public.set_daisy_booking_state(p_booking_id uuid, p_status text)
 returns void language plpgsql security invoker set search_path = public as $$
 declare v_slot_id uuid;

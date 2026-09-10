@@ -2,6 +2,13 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { artisiaFetch, keyFingerprint, LocalRateLimit, rpc } from "../_shared/artisia.ts";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+/**
+ * Runs one authenticated recovery pass for this deployment's workshop credential.
+ * A persisted one-minute claim prevents overlapping normal passes and survives restarts.
+ * Replays a bounded batch of durable events, then compares a GET snapshot with local
+ * slot versions. Matching totals never establish an uncertain booking's identity.
+ * checked means the pass completed, not that every publication is healthy.
+ */
 Deno.serve(async (request) => {
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
   // Required even when local testing disables the gateway's JWT verification.

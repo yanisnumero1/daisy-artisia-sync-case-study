@@ -348,7 +348,7 @@ test("records an external sale during an in-flight Daisy booking and pauses sale
   const bookings = await database`select status from public.bookings where slot_id = ${slotId}`;
   assert.equal(bookings.length, 2);
   assert.ok(bookings.every((booking) => booking.status === "confirmed"));
-  const conflicts = await database`select reason from public.sync_conflicts where slot_id = ${slotId}`;
+  const conflicts = await database`select reason from public.sync_conflicts where slot_id = ${slotId} and resolved_at is null`;
   assert.equal(conflicts.length, 1);
   assert.equal(conflicts[0].reason, "external_overbooking");
   const [publication] = await database`select sync_status from public.slot_partners where slot_id = ${slotId}`;

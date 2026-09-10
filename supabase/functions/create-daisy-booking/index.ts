@@ -21,7 +21,7 @@ Deno.serve(async (request) => {
   const { data: booking, error } = await db.rpc("reserve_daisy_seats", {
     p_slot_id: input.slotId, p_seats: input.seats,
     p_customer_name: input.customerName, p_customer_email: input.customerEmail,
-  }).single();
+  }).single<{ id: string }>();
   if (error) {
     if (error.message.includes("Not enough seats")) return json({ error: "Not enough seats" }, 409);
     if (error.message.includes("Partner synchronization unavailable")) return json({ status: "unavailable", message: "La disponibilité de ce créneau est en cours de vérification. Veuillez réessayer plus tard." }, 503);

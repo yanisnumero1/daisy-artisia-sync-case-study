@@ -1,6 +1,6 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-export type Database = ReturnType<typeof createClient>;
+export type Database = SupabaseClient;
 export async function keyFingerprint() {
   const key = Deno.env.get("ARTISIA_API_KEY");
   if (!key) throw new Error("Artisia key is not configured");

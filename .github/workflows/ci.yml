@@ -31,6 +31,14 @@ jobs:
       - name: Run TypeScript checks
         run: npm run typecheck
 
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Check Edge Function types
+        run: deno check supabase/functions/create-daisy-booking/index.ts supabase/functions/artisia-webhook/index.ts supabase/functions/reconcile-artisia/index.ts
+
   integration:
     name: Supabase integration tests
     runs-on: ubuntu-latest

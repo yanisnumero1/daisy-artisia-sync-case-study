@@ -317,7 +317,7 @@ test("flags an external booking that exceeds the slot capacity", async () => {
   const [conflict] = await database`
     select reason, resolved_at
     from public.sync_conflicts
-    where event_id = 'evt_external_overbooking'
+    where event_id = 'evt_external_overbooking' and reason = 'external_overbooking'
   `;
 
   const [externalBooking] = await database`

@@ -500,6 +500,9 @@ test("persists recovery backoff across calls and resumes safe GET after an outag
   const [failure] = await database`select failures,next_attempt_at,last_error from public.artisia_recovery`;
   assert.equal(failure.failures, 1);
   assert.equal(failure.last_error, "HTTP 500");
+  const [paused] = await database`select sync_status from public.slot_partners`;
+  assert.equal(paused.sync_status, "degraded");
+  assert.equal((await createBooking({ name: "Outage", email: "outage@example.com" })).status, 503);
   assert.equal((await (await recover()).json()).status, "deferred");
   let state = await (await fetch(`${mockUrl}/__state`)).json();
   assert.equal(state.sessionRequestCount, 1);
@@ -511,6 +514,8 @@ test("persists recovery backoff across calls and resumes safe GET after an outag
   assert.equal(success.failures, 0);
   assert.equal(success.last_error, null);
   assert.ok(success.last_success_at);
+  const [resumed] = await database`select sync_status from public.slot_partners`;
+  assert.equal(resumed.sync_status, "healthy");
   state = await (await fetch(`${mockUrl}/__state`)).json();
   assert.equal(state.bookingRequestCount, 0);
 });
@@ -546,4 +551,14 @@ test("recovery processes a persisted webhook without another partner delivery", 
   const bookings = await database`select source_booking_id from public.bookings`;
   assert.equal(bookings.length, 1);
   assert.equal(bookings[0].source_booking_id, "art_durable");
+});
+
+test("does not erase an open overbooking conflict when aggregate totals match", async () => {
+  await database`insert into public.sync_conflicts(slot_id,event_id,reason) values (${slotId},'evt_unresolved','external_overbooking')`;
+  await setSnapshot(0);
+  assert.equal((await recover()).status, 200);
+  const [publication] = await database`select sync_status from public.slot_partners`;
+  assert.equal(publication.sync_status, "needs_review");
+  const [issue] = await database`select resolved_at from public.sync_conflicts where event_id='evt_unresolved'`;
+  assert.equal(issue.resolved_at, null);
 });

@@ -192,6 +192,10 @@ returns void language sql security invoker set search_path = public as $$
       when p_error is null then clock_timestamp() + interval '1 minute'
       else clock_timestamp() + make_interval(secs => least(1200, 60 * power(2, failures)::integer)) end
   where key_id = p_key_id;
+  -- This deployment has one workshop key. Do not accept new sales after a
+  -- failed poll; preserve stronger needs_review states and recover by GET.
+  update public.slot_partners set sync_status = 'degraded'
+  where partner = 'artisia' and sync_status = 'healthy' and p_error is not null;
 $$;
 create function public.reconcile_artisia_session(p_session jsonb, p_version bigint)
 returns text language plpgsql security invoker set search_path = public as $$
@@ -253,3 +257,6 @@ end;
 $$;
 revoke all on function public.set_daisy_booking_state(uuid,text) from public, anon, authenticated;
 grant execute on function public.set_daisy_booking_state(uuid,text) to service_role;
+
+revoke all on function public.process_artisia_webhook_event(text) from public, anon, authenticated;
+grant execute on function public.process_artisia_webhook_event(text) to service_role;

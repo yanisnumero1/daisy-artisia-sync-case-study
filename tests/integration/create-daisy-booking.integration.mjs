@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { after, before, beforeEach, test } from "node:test";
@@ -99,12 +100,12 @@ before(
     functionProcess = startProcess("supabase", [
       "functions",
       "serve",
-      "create-daisy-booking",
       "--no-verify-jwt",
       "--env-file",
       "supabase/.env.local",
     ]);
     await waitForStatus(functionUrl, 405);
+    await waitForStatus("http://127.0.0.1:54321/functions/v1/artisia-webhook", 405);
   },
   { timeout: 60_000 },
 );
@@ -115,6 +116,7 @@ beforeEach(async () => {
     await sql`delete from public.sync_conflicts`;
     await sql`delete from public.webhook_events`;
     await sql`delete from public.bookings`;
+    await sql`update public.slots set capacity = 8 where id = ${slotId}`;
 
     await sql`
       update public.slot_partners
@@ -291,3 +293,63 @@ test(
     assert.equal(mockState.bookingRequestCount, 1);
   },
 );
+
+async function waitForPartnerCall() {
+  const deadline = Date.now() + 4_000;
+  while (Date.now() < deadline) {
+    const state = await (await fetch(`${mockUrl}/__state`)).json();
+    if (state.bookingRequestCount === 1) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("Daisy did not reach the partner barrier");
+}
+
+test("serializes simultaneous HTTP bookings for the last PostgreSQL seat", async () => {
+  await database`update public.slots set capacity = 1 where id = ${slotId}`;
+  const responses = await Promise.all([
+    createBooking({ name: "First", email: "first@example.com" }),
+    createBooking({ name: "Second", email: "second@example.com" }),
+  ]);
+  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
+  const bookings = await database`select status, seats from public.bookings where slot_id = ${slotId}`;
+  assert.equal(bookings.length, 1);
+  assert.equal(bookings[0].status, "confirmed");
+  assert.equal(bookings[0].seats, 1);
+  const state = await (await fetch(`${mockUrl}/__state`)).json();
+  assert.equal(state.bookingRequestCount, 1);
+});
+
+test("records an external sale during an in-flight Daisy booking and pauses sales", async () => {
+  await database`update public.slots set capacity = 1 where id = ${slotId}`;
+  await setScenario("held");
+  const pendingResponse = createBooking({ name: "Daisy", email: "race@example.com" });
+  try {
+    await waitForPartnerCall();
+    const [hold] = await database`select status from public.bookings where slot_id = ${slotId}`;
+    assert.equal(hold.status, "pending");
+    const body = JSON.stringify({
+      event_id: "evt_inflight", type: "booking.created", occurred_at: "2026-09-10T15:00:00Z",
+      data: { session_id: "art_ses_8812", booking_id: "art_direct", seats: 1 },
+    });
+    const signature = "sha256=" + createHmac("sha256", "test-secret").update(body).digest("hex");
+    const webhook = await fetch("http://127.0.0.1:54321/functions/v1/artisia-webhook", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Artisia-Signature": signature }, body,
+    });
+    assert.equal(webhook.status, 200);
+    assert.equal((await webhook.json()).status, "processed");
+  } finally {
+    await fetch(`${mockUrl}/__release`, { method: "POST" });
+  }
+  assert.equal((await pendingResponse).status, 200);
+  const bookings = await database`select status from public.bookings where slot_id = ${slotId}`;
+  assert.equal(bookings.length, 2);
+  assert.ok(bookings.every((booking) => booking.status === "confirmed"));
+  const conflicts = await database`select reason from public.sync_conflicts where slot_id = ${slotId}`;
+  assert.equal(conflicts.length, 1);
+  assert.equal(conflicts[0].reason, "external_overbooking");
+  const [publication] = await database`select sync_status from public.slot_partners where slot_id = ${slotId}`;
+  assert.equal(publication.sync_status, "needs_review");
+  assert.equal((await createBooking({ name: "Later", email: "later@example.com" })).status, 503);
+  const state = await (await fetch(`${mockUrl}/__state`)).json();
+  assert.equal(state.bookingRequestCount, 1);
+});

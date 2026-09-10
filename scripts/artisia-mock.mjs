@@ -1,10 +1,11 @@
 import { createServer } from "node:http";
 
 const port = 4010;
-const allowedScenarios = new Set(["success", "conflict", "error", "slow"]);
+const allowedScenarios = new Set(["success", "conflict", "error", "slow", "held"]);
 
 let scenario = process.env.ARTISIA_MOCK_SCENARIO ?? "success";
 let bookingRequestCount = 0;
+let releaseBooking;
 
 function sendJson(response, status, body) {
   response.writeHead(status, { "Content-Type": "application/json" });
@@ -42,6 +43,14 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  // A test-controlled barrier keeps the partner call open while a webhook arrives.
+  if (request.method === "POST" && request.url === "/__release") {
+    releaseBooking?.();
+    releaseBooking = undefined;
+    sendJson(response, 200, { released: true });
+    return;
+  }
+
   // This route lets tests verify that Daisy did not retry a booking POST.
   if (request.method === "GET" && request.url === "/__state") {
     sendJson(response, 200, {
@@ -67,25 +76,30 @@ const server = createServer(async (request, response) => {
   }
 
   bookingRequestCount += 1;
+  const bookingNumber = bookingRequestCount;
+  const requestScenario = scenario;
+  if (requestScenario === "held") {
+    await new Promise((resolve) => { releaseBooking = resolve; });
+  }
 
   // The slow scenario exceeds Daisy's seven-second timeout.
-  if (scenario === "slow") {
+  if (requestScenario === "slow") {
     await new Promise((resolve) => setTimeout(resolve, 8_000));
   }
 
-  if (scenario === "conflict") {
+  if (requestScenario === "conflict") {
     sendJson(response, 409, { error: "Not enough seats" });
     return;
   }
 
-  if (scenario === "error") {
+  if (requestScenario === "error") {
     response.writeHead(500);
     response.end();
     return;
   }
 
   sendJson(response, 201, {
-    booking_id: "art_bk_mock_001",
+    booking_id: `art_bk_mock_${String(bookingNumber).padStart(3, "0")}`,
     status: "confirmed",
   });
 });

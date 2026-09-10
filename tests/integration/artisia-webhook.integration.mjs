@@ -330,3 +330,43 @@ test("flags an external booking that exceeds the slot capacity", async () => {
   assert.equal(conflict.resolved_at, null);
   assert.equal(externalBooking.status, "confirmed");
 });
+
+test("applies three concurrently delivered copies of a webhook only once", async () => {
+  const event = bookingCreatedEvent({ eventId: "evt_concurrent", bookingId: "art_concurrent", occurredAt: "2026-09-10T15:00:00Z" });
+  const responses = await Promise.all(Array.from({ length: 3 }, () => sendWebhook(event)));
+  assert.ok(responses.every((response) => response.status === 200));
+  const [events] = await database`select count(*)::integer as count from public.webhook_events where event_id = 'evt_concurrent'`;
+  const [bookings] = await database`select count(*)::integer as count from public.bookings where source_booking_id = 'art_concurrent'`;
+  assert.equal(events.count, 1);
+  assert.equal(bookings.count, 1);
+});
+
+test("deduplicates the same external booking under concurrent distinct event IDs", async () => {
+  const responses = await Promise.all(["evt_same_a", "evt_same_b"].map((eventId) =>
+    sendWebhook(bookingCreatedEvent({ eventId, bookingId: "art_same", occurredAt: "2026-09-10T15:00:00Z" }))));
+  assert.ok(responses.every((response) => response.status === 200));
+  const [bookings] = await database`select count(*)::integer as count from public.bookings where source_booking_id = 'art_same'`;
+  assert.equal(bookings.count, 1);
+});
+
+test("does not resurrect a booking when cancellation arrives before its creation", async () => {
+  const cancellation = { event_id: "evt_cancel_first", type: "booking.cancelled", occurred_at: "2026-09-10T15:05:00Z",
+    data: { session_id: "art_ses_8812", booking_id: "art_cancel_first" } };
+  assert.equal((await sendWebhook(cancellation)).status, 200);
+  const late = await sendWebhook(bookingCreatedEvent({ eventId: "evt_create_late", bookingId: "art_cancel_first", occurredAt: "2026-09-10T15:00:00Z" }));
+  assert.equal((await late.json()).status, "stale");
+  const [bookings] = await database`select count(*)::integer as count from public.bookings where source_booking_id = 'art_cancel_first' and status <> 'cancelled'`;
+  assert.equal(bookings.count, 0);
+});
+
+test("updates partner session data and pauses a cancelled publication", async () => {
+  const response = await sendWebhook({ event_id: "evt_session_cancelled", type: "session.updated", occurred_at: "2026-09-10T15:00:00Z",
+    data: { session_id: "art_ses_8812", capacity: 6, booked: 2, status: "cancelled" } });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).status, "processed");
+  const [publication] = await database`select status, sync_status, last_known_capacity, last_known_booked from public.slot_partners where slot_id = ${slotId}`;
+  assert.equal(publication.status, "cancelled");
+  assert.equal(publication.sync_status, "needs_review");
+  assert.equal(publication.last_known_capacity, 6);
+  assert.equal(publication.last_known_booked, 2);
+});

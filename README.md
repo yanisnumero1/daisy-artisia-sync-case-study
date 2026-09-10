@@ -9,6 +9,20 @@ Ce projet contient deux implémentations complémentaires :
 
 Artisia est représenté par un serveur simulé local configurable qui reproduit les réservations réussies, les conflits de réservation, les erreurs serveur et les dépassements du délai d’attente.
 
+## Correspondance avec les attendus
+
+Le périmètre livré couvre le cœur demandé pour un partenaire Artisia :
+
+| Attendu minimum | Implémentation |
+| --- | --- |
+| Modèle des créneaux, places et réservations externes | Tables `slots`, `slot_partners`, `bookings` et contraintes PostgreSQL ; les places occupées sont calculées à partir des réservations actives |
+| Mise à jour des disponibilités dans les deux sens | Blocage local et POST vers Artisia pour une réservation Daisy ; webhook Artisia appliqué au stock Daisy |
+| Webhook entrant | Signature HMAC, persistance, déduplication, ordre sous verrou et reprise des événements non traités |
+
+Les sections « Deux clients réservent la dernière place simultanément », « Artisia reste injoignable pendant 20 minutes », « Webhooks reçus plusieurs fois ou dans le désordre » et « Compromis : suspendre une vente plutôt qu’aggraver une incertitude » répondent aux quatre questions de l’énoncé.
+
+**Ce périmètre ne signifie pas que tous les usages de l’annexe sont implémentés.** Les changements de capacité via `PATCH`, les annulations sortantes en masse, la sélection de plusieurs comptes atelier et la propagation vers plusieurs partenaires restent des extensions. Le rapprochement détecte les écarts, mais ne reconstitue pas les réservations individuelles absentes d’une API qui ne fournit que des totaux. Son processus doit être lancé pour fonctionner périodiquement. L’interface artisan n’est pas fournie.
+
 ## Démarrage
 
 Prérequis : Node.js, Docker Desktop et la CLI Supabase.
@@ -317,7 +331,7 @@ Le rapprochement persistant détecte les écarts et conserve les ambiguïtés po
 - Un serveur HTTP Artisia simulant `201`, `409`, `500` et les dépassements du délai d’attente.
 - Des données locales reproductibles grâce à `seed.sql`.
 - Neuf tests rapides de la logique métier.
-- Des tests d’intégration couvrant les réservations, les webhooks, le rapprochement et la limitation des appels.
+- Trente-six tests d’intégration couvrant les réservations, les webhooks, le rapprochement et la limitation des appels, soit 45 tests avec les neuf tests unitaires.
 
 ### Éléments volontairement hors périmètre
 

@@ -130,28 +130,20 @@ export class SyncService {
     });
   }
 
-  /**
-   * Simplified manual reconciliation, without a worker or per-slot locking.
-   * Matching totals confirm all uncertain bookings for the slot,
-   * but do not establish their identity at Artisia. A mismatch leaves needs_review
-   * without creating a conflict; existing conflicts are not closed.
-   */
+  /** Aggregate equality never proves which uncertain bookings succeeded. */
   async reconcile() {
     const sessions = await this.partner.listSessions();
     for (const session of sessions) {
       const slot = [...this.store.slots.values()].find((candidate) => candidate.partnerSessionId === session.session_id);
       if (!slot) continue;
-      const knownSeats = [...this.store.bookings.values()]
-        .filter((booking) => booking.slotId === slot.id && booking.status !== "cancelled")
-        .reduce((sum, booking) => sum + booking.seats, 0);
-      slot.partnerBooked = session.booked;
-      if (knownSeats !== session.booked) slot.syncState = "needs_review";
-      else {
-        slot.syncState = "healthy";
-        for (const booking of this.store.bookings.values()) {
-          if (booking.slotId === slot.id && booking.status === "uncertain") booking.status = "confirmed";
-        }
-      }
+      await this.store.withSlotLock(slot.id, async () => {
+        const bookings = [...this.store.bookings.values()].filter((booking) => booking.slotId === slot.id && booking.status !== "cancelled");
+        const knownSeats = bookings.reduce((sum, booking) => sum + booking.seats, 0);
+        slot.partnerBooked = session.booked;
+        slot.syncState = knownSeats !== session.booked || session.capacity !== slot.capacity || session.status !== "published" ||
+          bookings.some((booking) => booking.status === "uncertain" || booking.status === "pending") ||
+          this.store.conflicts.some((conflict) => conflict.slotId === slot.id) ? "needs_review" : "healthy";
+      });
     }
   }
 

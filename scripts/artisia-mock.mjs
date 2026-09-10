@@ -1,11 +1,16 @@
 import { createServer } from "node:http";
 
 const port = 4010;
-const allowedScenarios = new Set(["success", "conflict", "error", "slow", "held"]);
+const allowedScenarios = new Set(["success", "conflict", "error", "slow", "held", "slow_success_4", "slow_success_6", "rate_limit"]);
 
 let scenario = process.env.ARTISIA_MOCK_SCENARIO ?? "success";
 let bookingRequestCount = 0;
 let releaseBooking;
+let sessionRequestCount = 0;
+const initialSessions = () => [{ session_id: "art_ses_8812", external_ref: "11111111-1111-1111-1111-111111111111",
+  title: "Beginner pottery", starts_at: "2027-01-16T14:00:00+01:00", duration_minutes: 120,
+  capacity: 8, booked: 0, status: "published", updated_at: new Date().toISOString() }];
+let sessions = initialSessions();
 
 function sendJson(response, status, body) {
   response.writeHead(status, { "Content-Type": "application/json" });
@@ -35,11 +40,30 @@ const server = createServer(async (request, response) => {
 
       scenario = body.scenario;
       bookingRequestCount = 0;
+      sessionRequestCount = 0;
+      sessions = initialSessions();
       sendJson(response, 200, { scenario });
     } catch {
       sendJson(response, 400, { error: "Invalid JSON" });
     }
 
+    return;
+  }
+
+  if (request.method === "PUT" && request.url === "/__sessions") {
+    sessions = (await readJson(request)).sessions;
+    sendJson(response, 200, { sessions });
+    return;
+  }
+  if (request.method === "GET" && request.url === "/v1/sessions") {
+    if (request.headers.authorization !== "Bearer test-api-key") return sendJson(response, 401, { error: "Invalid API key" });
+    sessionRequestCount += 1;
+    if (scenario === "error" || scenario === "rate_limit") {
+      response.writeHead(scenario === "error" ? 500 : 429);
+      response.end();
+      return;
+    }
+    sendJson(response, 200, { sessions });
     return;
   }
 
@@ -56,6 +80,7 @@ const server = createServer(async (request, response) => {
     sendJson(response, 200, {
       scenario,
       bookingRequestCount,
+      sessionRequestCount,
     });
     return;
   }
@@ -78,6 +103,8 @@ const server = createServer(async (request, response) => {
   bookingRequestCount += 1;
   const bookingNumber = bookingRequestCount;
   const requestScenario = scenario;
+  const requestSessions = sessions;
+  const input = await readJson(request);
   if (requestScenario === "held") {
     await new Promise((resolve) => { releaseBooking = resolve; });
   }
@@ -85,6 +112,13 @@ const server = createServer(async (request, response) => {
   // The slow scenario exceeds Daisy's seven-second timeout.
   if (requestScenario === "slow") {
     await new Promise((resolve) => setTimeout(resolve, 8_000));
+  }
+
+  if (requestScenario.startsWith("slow_success_")) {
+    await new Promise((resolve) => setTimeout(resolve, Number(requestScenario.at(-1)) * 1_000));
+  }
+  if (requestScenario === "rate_limit") {
+    response.writeHead(429); response.end(); return;
   }
 
   if (requestScenario === "conflict") {
@@ -98,9 +132,12 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  requestSessions[0].booked += input.seats;
+  requestSessions[0].updated_at = new Date().toISOString();
   sendJson(response, 201, {
     booking_id: `art_bk_mock_${String(bookingNumber).padStart(3, "0")}`,
     status: "confirmed",
+    seats: input.seats,
   });
 });
 

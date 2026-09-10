@@ -1,34 +1,34 @@
 # Synchronization scenario coverage
 
-This matrix describes the scenarios documented in this repository. The original exercise specification is not included, so this is not a claim of complete compliance with an external specification.
+The implementation targets the supplied Artisia contract: non-idempotent booking POSTs, slow responses, empty 500s, fixed-minute rate limits, duplicate/out-of-order/missing webhooks and aggregate session reads. One workshop credential is configured per deployment; multi-workshop routing and multiple partner implementations remain out of scope.
 
-Run the suites sequentially: both integration commands reset the same local Supabase database.
+Run `npm test`, `npm run typecheck`, `npm run test:integration`, and `npm run test:webhook`. The integration suites reset the same local Supabase database: run them sequentially. GitHub Actions also checks all three Deno Edge Functions.
 
-```bash
-npm test
-npm run typecheck
-npm run test:integration
-npm run test:webhook
-```
-
-The GitHub Actions workflow runs these checks with PostgreSQL and the local Artisia HTTP mock. Type checking covers the Node prototype, not the Deno Edge Functions.
-
-| Scenario | Verification | Remaining limitation |
+| Scenario | Verification | Limit |
 | --- | --- | --- |
-| Artisia accepts a booking | Booking integration: HTTP result and persisted confirmation | Mock partner, not a live Artisia account |
-| Artisia refuses with 409 | Booking integration: cancellation and released capacity | None within this simulated flow |
-| Artisia returns 500 | Booking integration: uncertain booking and review state | Automatic recovery is not implemented |
-| Partner times out | Booking integration: held seats and one outgoing POST | A short timeout simulates the failure; no 20-minute outage recovery test |
-| Partner requires review | Booking integration: new sales blocked before a partner call | No workshop review interface |
-| Two Daisy customers request the last seat | Concurrent HTTP requests through the Edge Function and PostgreSQL; one booking and one partner call | Does not exercise multiple remote platforms |
-| External sale arrives during a Daisy reservation | Mock response held behind an explicit barrier; signed webhook arrives while the local hold is pending | Tests conflict detection and sales suspension, not an impossible cross-platform lock |
-| Valid or invalid webhook signature | Webhook integration: response and stored state | Mock shared secret |
-| Duplicate webhook deliveries | Sequential and three concurrent copies; exactly one event and booking | No load or endurance benchmark |
-| Same external booking, distinct event IDs | Concurrent deliveries; one external booking | Does not cover an echo of a Daisy-origin booking |
-| Old creation after cancellation | Tests both an existing booking and cancellation arriving before any creation | Concurrent ordering of distinct timestamps still needs a dedicated test |
-| Session update/cancellation | Stored partner capacity, booked count, status, and review state | No automatic reconciliation of capacity discrepancies |
-| Reconciliation | Unit test for matching aggregate totals | No persistent worker; aggregate equality does not identify individual bookings |
+| Booking accepted or rejected | HTTP and persisted state | Mock API |
+| Two Daisy bookings take the last seat | Concurrent HTTP calls and PostgreSQL inventory | No distributed lock at Artisia |
+| External sale during Daisy POST | Controlled response barrier plus signed webhook | Overbooking is surfaced, not impossible |
+| Webhook echoes a known Daisy booking | One counted sale | Exact partner ID required |
+| Webhook precedes POST response | Audit alias linked by exact partner ID | Temporary conservative double hold |
+| Cancellation precedes POST response | Cancellation remains authoritative | No refund handling |
+| Timeout with an unknown webhook | Identity remains ambiguous; seats held | No identity guessing from totals/customer data |
+| Valid 4- and 6-second responses | Both confirm before the 7-second deadline | No load benchmark |
+| 500 or timeout | No blind POST retry; uncertain inventory | Manual review may still be required |
+| Partner 429 | Key blocked until next full minute; no POST retry | Contract does not prove the sale failed |
+| Local rate budget exhausted | No HTTP POST; local hold released | All callers must use the shared limiter |
+| Per-key rate limiting | 65 concurrent claims, only 60 granted; independent key; minute rollover | One workshop key configured in this demo |
+| Duplicate delivery | Sequential and concurrent copies | No endurance benchmark |
+| Out-of-order events | Queued cancellation and creation under an explicit database lock | Equal timestamps use cancellation precedence |
+| Webhook contention | Non-2xx within five seconds; persisted event retry | Network latency cannot be universally guaranteed |
+| Lost delivery | GET detects aggregate mismatch; sales blocked | Missing individual bookings cannot be reconstructed |
+| Persisted unprocessed event | Recovery retries it without another webhook delivery | Bounded batch per pass |
+| Matching totals with uncertainty | Reservation stays uncertain and under review | Identity needs independent evidence |
+| Outage and recovery | Persisted backoff survives calls; safe GET resumes | Twenty-minute passage simulated through scheduling state |
+| GET 429 | Next-minute retry persisted; no immediate retry | Other clients sharing the key may consume capacity |
+| Local changes during GET | Snapshot deferred using slot version | Eventual, not distributed, consistency |
+| Recovery authorization | Requires a server token | Production secret management is not deployed |
 
-The in-flight race test deliberately records two accepted sales for one seat and requires a conflict plus `needs_review`. Its success proves that the conflict is surfaced and further sales stop; it does not prove that cross-platform overbooking is prevented.
+`node scripts/reconcile-artisia.mjs` runs recovery every minute; `--once` supports an external scheduler. Set `ARTISIA_RECOVERY_TOKEN` in the worker and Edge Function. Backoff lives in PostgreSQL, not process memory. A deployment supervisor is still required to keep the worker running.
 
-The HTTP mock has a test-only `held` scenario and `POST /__release` endpoint. Together they control when a partner response is returned, so the overlap does not depend on an arbitrary sleep. Other scenarios remain `success`, `conflict`, `error`, and `slow`. Mock booking identifiers are unique within each scenario run.
+Changing capacity with PATCH, bulk cancellations, workshop UI, alerts, encrypted per-workshop credentials and cross-partner propagation are documented extensions, not implemented claims. Aggregate equality never confirms uncertain bookings. Existing historical duplicates are not automatically rewritten by the migration.

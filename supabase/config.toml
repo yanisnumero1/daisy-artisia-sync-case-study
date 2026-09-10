@@ -417,3 +417,6 @@ enabled = true
 # Artisia authenticates with an HMAC signature instead of a Supabase JWT.
 [functions.artisia-webhook]
 verify_jwt = false
+# Recovery uses its own server token, never an end-user JWT.
+[functions.reconcile-artisia]
+verify_jwt = false

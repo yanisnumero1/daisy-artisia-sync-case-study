@@ -40,7 +40,7 @@ Deno.serve(async (request) => {
   const webhookSecret = Deno.env.get("ARTISIA_WEBHOOK_SECRET");
 
   if (!webhookSecret) {
-    //Without this secret, Daisy cannot verify that the webhook really comes from Artisia.
+    // Without this secret, Daisy cannot verify that the webhook really comes from Artisia.
     return response({ error: "Webhook secret is not configured" }, 500);
   }
 
@@ -52,20 +52,30 @@ Deno.serve(async (request) => {
   );
   if (!valid) return response({ error: "Invalid signature" }, 401);
 
-  let event: { event_id?: string; type?: string; occurred_at?: string; data?: unknown };
+  let event: { event_id?: string; type?: string; occurred_at?: string; data?: { session_id?: string; booking_id?: string; seats?: number; capacity?: number; booked?: number; status?: string } };
   try {
     event = JSON.parse(rawBody);
   } catch {
     return response({ error: "Invalid JSON" }, 400);
   }
   const supportedTypes = new Set(["booking.created", "booking.cancelled", "session.updated"]);
-  if (!event.event_id || !event.type || !supportedTypes.has(event.type) || !event.occurred_at || !event.data) {
+  if (!event || typeof event.event_id !== "string" || !event.event_id || !event.type || !supportedTypes.has(event.type) || !event.occurred_at || !Number.isFinite(Date.parse(event.occurred_at)) || !event.data ||
+      typeof event.data.session_id !== "string" || !event.data.session_id ||
+      (event.type.startsWith("booking.") && (typeof event.data.booking_id !== "string" || !event.data.booking_id)) ||
+      (event.type === "booking.created" && (!Number.isSafeInteger(event.data.seats) || event.data.seats! <= 0)) ||
+      (event.data.capacity !== undefined && (!Number.isSafeInteger(event.data.capacity) || event.data.capacity < 0)) ||
+      (event.data.booked !== undefined && (!Number.isSafeInteger(event.data.booked) || event.data.booked < 0)) ||
+      (event.data.status !== undefined && !["published", "cancelled"].includes(event.data.status))) {
     return response({ error: "Invalid Artisia event" }, 400);
   }
 
+  // One deadline for ALL database calls, below Artisia's five-second cutoff.
+  const deadline = AbortSignal.timeout(3_500);
+  try {
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    { global: { fetch: (url, options) => fetch(url, { ...options, signal: deadline }) } },
   );
 
   const { error: insertError } = await supabase.from("webhook_events").insert({
@@ -99,5 +109,9 @@ Deno.serve(async (request) => {
     .rpc("process_artisia_webhook_event", { p_event_id: event.event_id });
   if (processError) return response({ error: "Could not process event" }, 500);
 
-  return response({ status: result });
+  return response({ status: result }, result === "failed" ? 503 : 200);
+  } catch {
+    // A durably received event remains available to recovery even if HTTP times out.
+    return response({ error: "Webhook processing temporarily unavailable" }, 503);
+  }
 });

@@ -134,6 +134,7 @@ beforeEach(async () => {
       set
         status = 'published',
         sync_status = 'healthy',
+        last_known_capacity = 8,
         last_known_booked = 0
       where slot_id = ${slotId}
         and partner = 'artisia'
@@ -369,4 +370,82 @@ test("updates partner session data and pauses a cancelled publication", async ()
   assert.equal(publication.sync_status, "needs_review");
   assert.equal(publication.last_known_capacity, 6);
   assert.equal(publication.last_known_booked, 2);
+});
+
+async function waitForDatabaseLock(applicationName) {
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    const [activity] = await database`select count(*)::integer as count from pg_stat_activity
+      where application_name = ${applicationName} and wait_event_type = 'Lock'`;
+    if (activity.count) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Expected a queued database lock: ${applicationName}`);
+}
+
+test("reads event order after the preceding concurrent cancellation commits", async () => {
+  const url = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
+  const blocker = postgres(url, { max: 1 });
+  const newer = postgres(url, { max: 1, connection: { application_name: "newer-webhook-test" } });
+  const older = postgres(url, { max: 1, connection: { application_name: "older-webhook-test" } });
+  const newerEvent = { event_id: "evt_queued_cancel", type: "booking.cancelled", occurred_at: "2026-09-10T15:05:00Z",
+    data: { session_id: "art_ses_8812", booking_id: "art_queued" } };
+  const olderEvent = bookingCreatedEvent({ eventId: "evt_queued_create", bookingId: "art_queued", occurredAt: "2026-09-10T15:00:00Z" });
+  for (const event of [newerEvent, olderEvent]) await database`
+    insert into public.webhook_events(event_id,event_type,payload,occurred_at)
+    values (${event.event_id},${event.type},${database.json(event)},${event.occurred_at})`;
+  const connection = await blocker.reserve();
+  let first, second;
+  try {
+    await connection`begin`;
+    await connection`select id from public.slots where id=${slotId} for update`;
+    first = newer`select public.process_artisia_webhook_event('evt_queued_cancel') as status`.then((result) => result);
+    await waitForDatabaseLock("newer-webhook-test");
+    second = older`select public.process_artisia_webhook_event('evt_queued_create') as status`.then((result) => result);
+    await waitForDatabaseLock("older-webhook-test");
+    await connection`commit`;
+    assert.equal((await first)[0].status, "processed");
+    assert.equal((await second)[0].status, "stale");
+    const [bookings] = await database`select count(*)::integer as count from public.bookings where source_booking_id='art_queued'`;
+    assert.equal(bookings.count, 0);
+  } finally {
+    await connection`rollback`;
+    connection.release();
+    await Promise.allSettled([first, second]);
+    await Promise.all([blocker.end(), newer.end(), older.end()]);
+  }
+});
+
+test("returns a retryable response within five seconds under slot contention", async () => {
+  const blocker = postgres("postgresql://postgres:postgres@127.0.0.1:54322/postgres", { max: 1 });
+  const connection = await blocker.reserve();
+  const event = bookingCreatedEvent({ eventId: "evt_busy", bookingId: "art_busy", occurredAt: "2026-09-10T15:00:00Z" });
+  try {
+    await connection`begin`;
+    await connection`select id from public.slots where id=${slotId} for update`;
+    const start = Date.now();
+    const response = await sendWebhook(event);
+    assert.ok(response.status >= 500);
+    assert.ok(Date.now() - start < 5_000);
+    const [stored] = await database`select status from public.webhook_events where event_id='evt_busy'`;
+    assert.equal(stored.status, "received");
+    await connection`commit`;
+    const retried = await sendWebhook(event);
+    assert.equal(retried.status, 200);
+    assert.equal((await retried.json()).status, "processed");
+  } finally {
+    await connection`rollback`;
+    connection.release();
+    await blocker.end();
+  }
+});
+
+test("cancellation wins equal partner timestamps regardless of arrival order", async () => {
+  const created = bookingCreatedEvent({ eventId: "evt_tie_create", bookingId: "art_tie", occurredAt: "2026-09-10T15:00:00Z" });
+  assert.equal((await sendWebhook(created)).status, 200);
+  assert.equal((await sendWebhook({ ...created, event_id: "evt_tie_cancel", type: "booking.cancelled" })).status, 200);
+  const [booking] = await database`select status from public.bookings where source_booking_id='art_tie'`;
+  assert.equal(booking.status, "cancelled");
+  const late = await sendWebhook({ ...created, event_id: "evt_tie_again" });
+  assert.equal((await late.json()).status, "stale");
 });

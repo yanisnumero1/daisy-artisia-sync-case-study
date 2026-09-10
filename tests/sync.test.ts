@@ -77,15 +77,15 @@ describe("Daisy / Artisia synchronization", () => {
     expect(store.slots.get("slot-1")?.syncState).toBe("needs_review");
   });
 
-  it("reconciles an uncertain booking when Artisia's aggregate matches", async () => {
+  it("keeps an uncertain booking under review even when aggregates match", async () => {
     const { service, store, partner } = setup();
     partner.behavior = "normal";
     await service.bookInDaisy({ id: "daisy-1", slotId: "slot-1", seats: 1, customerName: "A", customerEmail: "a@example.com" });
     store.bookings.get("daisy-1")!.status = "uncertain";
     store.slots.get("slot-1")!.syncState = "needs_review";
     await service.reconcile();
-    expect(store.bookings.get("daisy-1")?.status).toBe("confirmed");
-    expect(store.slots.get("slot-1")?.syncState).toBe("healthy");
+    expect(store.bookings.get("daisy-1")?.status).toBe("uncertain");
+    expect(store.slots.get("slot-1")?.syncState).toBe("needs_review");
   });
 
   it("ignores an older webhook delivered after a newer one", async () => {

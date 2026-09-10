@@ -1,4 +1,5 @@
 export type BookingSource = "daisy" | "artisia";
+/** pending and uncertain consume capacity just as confirmed does. */
 export type BookingStatus = "pending" | "confirmed" | "uncertain" | "cancelled";
 
 export interface Slot {

@@ -9,6 +9,7 @@ export class PartnerError extends Error {
   }
 }
 
+/** Prototype contract; externalRef provides correlation, not an idempotency guarantee. */
 export interface PartnerClient {
   listSessions(): Promise<ArtisiaSession[]>;
   createBooking(input: {
@@ -20,6 +21,7 @@ export interface PartnerClient {
   deleteBooking(bookingId: string): Promise<void>;
 }
 
+/** In-memory unit test mock, separate from the HTTP server in scripts/artisia-mock.mjs. */
 export class MockArtisia implements PartnerClient {
   sessions = new Map<string, ArtisiaSession>();
   bookings = new Map<string, { sessionId: string; seats: number }>();

@@ -3,6 +3,7 @@ import { PartnerError, type PartnerClient } from "./partner.js";
 import { Store } from "./store.js";
 import type { Booking, PartnerWebhook } from "./types.js";
 
+/** In-memory business model; differences from the Supabase flow are documented in the README. */
 export class SyncService {
   constructor(
     private readonly store: Store,
@@ -10,6 +11,11 @@ export class SyncService {
     private readonly webhookSecret = "test-secret",
   ) {}
 
+  /**
+   * Holds seats before contacting the partner and keeps this lock throughout the call.
+   * An error can leave an uncertain booking in memory: it does not necessarily mean
+   * that booking creation failed at Artisia.
+   */
   async bookInDaisy(input: {
     id: string; slotId: string; seats: number; customerName: string; customerEmail: string;
   }): Promise<Booking> {
@@ -48,6 +54,7 @@ export class SyncService {
         return booking;
       } catch (error) {
         if (error instanceof PartnerError && error.kind === "conflict") {
+          // The prototype deletes the hold; Supabase retains a cancelled row.
           this.store.bookings.delete(booking.id);
           throw new Error("Artisia vient de prendre la dernière place. La réservation n'a pas été confirmée.");
         }
@@ -60,6 +67,11 @@ export class SyncService {
     });
   }
 
+  /**
+   * The caller must supply an event parsed from the same rawBody that was signed.
+   * Dates are compared as strings: use a consistent ISO UTC format.
+   * In-memory deduplication is not a substitute for PostgreSQL unique constraints.
+   */
   async receiveWebhook(rawBody: string, signature: string, event: PartnerWebhook) {
     this.verifySignature(rawBody, signature);
     if (this.store.processedEvents.has(event.event_id)) return { status: "duplicate" as const };
@@ -89,6 +101,7 @@ export class SyncService {
         if (alreadyKnown) return { status: "duplicate" as const };
 
         const seats = event.data.seats ?? 0;
+        // Only the conflict is retained here. SQL also records the external sale.
         if (this.store.availableSeats(slot.id) < seats) {
           slot.syncState = "needs_review";
           this.store.conflicts.push({ slotId: slot.id, eventId: event.event_id, reason: "external_overbooking" });
@@ -117,6 +130,12 @@ export class SyncService {
     });
   }
 
+  /**
+   * Simplified manual reconciliation, without a worker or per-slot locking.
+   * Matching totals confirm all uncertain bookings for the slot,
+   * but do not establish their identity at Artisia. A mismatch leaves needs_review
+   * without creating a conflict; existing conflicts are not closed.
+   */
   async reconcile() {
     const sessions = await this.partner.listSessions();
     for (const session of sessions) {

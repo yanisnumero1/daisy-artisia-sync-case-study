@@ -1,17 +1,17 @@
-# Availability synchronization between Daisy and Artisia
+# Synchronisation des disponibilités entre Daisy et Artisia
 
-Technical case study for **Topic A: synchronize without overbooking**.
+Étude de cas technique pour le **Sujet A : synchroniser sans surréserver**.
 
-This project contains two complementary implementations:
+Ce projet contient deux implémentations complémentaires :
 
-- an in-memory business model for fast unit tests;
-- a persistent implementation using Supabase, PostgreSQL migrations, Edge Functions, and HTTP integration tests.
+- un modèle métier en mémoire pour exécuter rapidement les tests unitaires ;
+- une implémentation persistante utilisant Supabase, des migrations PostgreSQL, des Edge Functions et des tests d’intégration HTTP.
 
-Artisia is represented by a configurable local mock server that simulates successful bookings, booking conflicts, server errors, and timeouts.
+Artisia est représenté par un serveur simulé local configurable qui reproduit les réservations réussies, les conflits de réservation, les erreurs serveur et les dépassements du délai d’attente.
 
-## Getting started
+## Démarrage
 
-Prerequisites: Node.js, Docker Desktop, and the Supabase CLI.
+Prérequis : Node.js, Docker Desktop et la CLI Supabase.
 
 ```bash
 npm install
@@ -23,49 +23,49 @@ npm run test:webhook
 npm run typecheck
 ```
 
-`npm test` runs the fast business logic tests. These require neither Docker nor Supabase.
+`npm test` exécute les tests rapides de la logique métier. Ils ne nécessitent ni Docker ni Supabase.
 
-`npm run test:integration` resets the local Supabase database, starts the Artisia mock and the booking Edge Function, and checks the booking flow from HTTP requests to PostgreSQL.
+`npm run test:integration` réinitialise la base Supabase locale, démarre le serveur simulé Artisia et l’Edge Function de réservation, puis vérifie le parcours de réservation des requêtes HTTP jusqu’à PostgreSQL.
 
-`npm run test:webhook` checks signatures, duplicate delivery, event ordering, and external conflicts.
+`npm run test:webhook` vérifie les signatures, les réceptions en double, l’ordre des événements et les conflits externes.
 
-Both integration suites reset the local database, deleting its test data. Run them sequentially because they share the same database.
+Les deux suites d’intégration réinitialisent la base locale et effacent ses données de test. Les exécuter successivement, car elles partagent la même base.
 
-`npm run typecheck` checks `src/` and the TypeScript tests without generating files. It does not check the Deno Edge Functions in `supabase/functions/`.
+`npm run typecheck` vérifie `src/` et les tests TypeScript sans générer de fichiers. Cette commande ne vérifie pas les Edge Functions Deno dans `supabase/functions/`.
 
-## Using the APIs locally
+## Utiliser les API en local
 
-After installing dependencies and starting Supabase as above, start the mock in one terminal:
+Après avoir installé les dépendances et démarré Supabase comme indiqué ci-dessus, lancer le serveur simulé dans un terminal :
 
 ```bash
 node scripts/artisia-mock.mjs
 ```
 
-In a second terminal, serve both functions with the local configuration:
+Dans un deuxième terminal, démarrer les deux fonctions avec la configuration locale :
 
 ```bash
 supabase functions serve --no-verify-jwt --env-file supabase/.env.local
 ```
 
-This demonstration mode disables JWT verification, as the booking tests do. The webhook still verifies its HMAC signature. Stop both processes before running integration tests, which start their own services.
+Ce mode de démonstration désactive la vérification JWT, comme les tests de réservation. Le webhook conserve la vérification de sa signature HMAC. Arrêter ces deux processus avant de lancer les tests d’intégration, qui démarrent leurs propres services.
 
 ### Configuration
 
-| Variable | Use in this demonstration |
+| Variable | Utilisation dans cette démonstration |
 | --- | --- |
-| `ARTISIA_BASE_URL` | `http://host.docker.internal:4010/v1`, allowing Docker to reach the mock |
-| `ARTISIA_API_KEY` | `test-api-key`, the value expected by the local mock |
-| `ARTISIA_WEBHOOK_SECRET` | `test-secret`, the local HMAC secret |
-| `SUPABASE_URL` | URL supplied to the local Edge Functions runtime |
-| `SUPABASE_SERVICE_ROLE_KEY` | Server key supplied to the local runtime, used by the functions to access PostgreSQL |
+| `ARTISIA_BASE_URL` | `http://host.docker.internal:4010/v1`, pour joindre le serveur simulé depuis Docker |
+| `ARTISIA_API_KEY` | `test-api-key`, valeur attendue par le serveur simulé local |
+| `ARTISIA_WEBHOOK_SECRET` | `test-secret`, secret HMAC local |
+| `SUPABASE_URL` | URL fournie à l’environnement d’exécution local des Edge Functions |
+| `SUPABASE_SERVICE_ROLE_KEY` | Clé serveur fournie à l’environnement local, utilisée par les fonctions pour accéder à PostgreSQL |
 
-The three Artisia variables are defined in `supabase/.env.example`; copy this file to `supabase/.env.local`. These demonstration values belong to the mock, not a real Artisia account.
+Les trois variables Artisia sont définies dans `supabase/.env.example` ; copier ce fichier dans `supabase/.env.local`. Ces valeurs de démonstration correspondent au serveur simulé, pas à un compte Artisia réel.
 
-### Creating a Daisy booking
+### Créer une réservation Daisy
 
-`POST /functions/v1/create-daisy-booking` expects a JSON object containing `slotId` (an existing slot UUID), `seats` (a positive integer), `customerName`, and `customerEmail` (nonempty strings). Current validation is minimal and does not check email address formatting.
+`POST /functions/v1/create-daisy-booking` attend un objet JSON contenant `slotId` (UUID d’un créneau existant), `seats` (entier positif), `customerName` et `customerEmail` (chaînes non vides). La validation actuelle est minimale et ne vérifie pas le format de l’adresse courriel.
 
-The seeded slot has eight seats and is linked to session `art_ses_8812`:
+Le créneau créé par les données d’initialisation contient huit places et est lié à la session `art_ses_8812` :
 
 ```bash
 curl -i http://127.0.0.1:54321/functions/v1/create-daisy-booking \
@@ -73,23 +73,23 @@ curl -i http://127.0.0.1:54321/functions/v1/create-daisy-booking \
   --data '{"slotId":"11111111-1111-1111-1111-111111111111","seats":1,"customerName":"Camille Example","customerEmail":"camille@example.com"}'
 ```
 
-| Daisy HTTP code | Response / meaning |
+| Code HTTP Daisy | Réponse / signification |
 | --- | --- |
-| `200` | `{"status":"confirmed","bookingId":"<Daisy UUID>"}` after Artisia returns `201` |
-| `202` | `{"status":"uncertain","message":"…"}`: seats remain held pending verification |
-| `409` | `{"error":"Not enough seats"}` for insufficient local capacity, or `{"status":"cancelled","message":"…"}` after an Artisia rejection |
-| `503` | `{"status":"unavailable","message":"…"}` when the partner publication prevents a new sale |
-| `400` | `{"error":"…"}`: invalid body or failed local reservation |
-| `405` | Unsupported method (`OPTIONS` is accepted for CORS) |
-| `500` | Failed to save confirmation after the partner accepted the booking |
+| `200` | `{"status":"confirmed","bookingId":"<UUID Daisy>"}` après une réponse `201` d’Artisia |
+| `202` | `{"status":"uncertain","message":"…"}` : les places restent bloquées en attendant une vérification |
+| `409` | `{"error":"Not enough seats"}` si la capacité locale est insuffisante, ou `{"status":"cancelled","message":"…"}` après un refus d’Artisia |
+| `503` | `{"status":"unavailable","message":"…"}` lorsque la publication partenaire empêche une nouvelle vente |
+| `400` | `{"error":"…"}` : corps invalide ou échec de la réservation locale |
+| `405` | Méthode non prise en charge (`OPTIONS` est accepté pour CORS) |
+| `500` | Échec de l’enregistrement de la confirmation après acceptation par le partenaire |
 
-A `202` does not guarantee a later email: the worker and confirmation delivery are not implemented. The flow exposes no client idempotency key; repeating the request can create another booking.
+Une réponse `202` ne garantit pas l’envoi ultérieur d’un courriel : le traitement en arrière-plan et l’envoi des confirmations ne sont pas implémentés. Le parcours n’expose aucune clé d’idempotence client ; répéter la requête peut créer une autre réservation.
 
-### Sending a signed webhook
+### Envoyer un webhook signé
 
-`POST /functions/v1/artisia-webhook` expects `event_id`, `type`, `occurred_at`, and `data`. Supported types are `booking.created`, `booking.cancelled`, and `session.updated`. Supply `data.session_id` and, for booking events, `data.booking_id`. For a creation, also supply `data.seats` (a positive integer); `data.customer` is optional. Session updates use `capacity`, `booked`, and `status` within `data`.
+`POST /functions/v1/artisia-webhook` attend `event_id`, `type`, `occurred_at` et `data`. Les types pris en charge sont `booking.created`, `booking.cancelled` et `session.updated`. Fournir `data.session_id` et, pour les événements de réservation, `data.booking_id`. Pour une création, fournir également `data.seats` (entier positif) ; `data.customer` est facultatif. Les mises à jour de session utilisent les champs `capacity`, `booked` et `status` dans `data`.
 
-The `X-Artisia-Signature` header contains `sha256=` followed by the lowercase hexadecimal HMAC-SHA256 of the raw body. The transmitted body must exactly match the signed body, including whitespace and line breaks. Run this example in a third terminal using the secret from the example environment file:
+L’en-tête `X-Artisia-Signature` contient `sha256=` suivi du HMAC-SHA256 du corps brut, au format hexadécimal en minuscules. Le corps transmis doit correspondre exactement au corps signé, espaces et retours à la ligne compris. Exécuter cet exemple dans un troisième terminal avec le secret du fichier d’environnement d’exemple :
 
 ```bash
 node --input-type=module <<'JS'
@@ -110,236 +110,236 @@ console.log(result.status, await result.json());
 JS
 ```
 
-The first run against a freshly initialized database returns `200` with `{"status":"processed"}`; repeating the event returns `{"status":"duplicate"}`. Other possible business results under HTTP `200` are `stale`, `ignored`, and `failed`. In particular, an unknown session currently produces `failed` with HTTP `200`: the HTTP code alone does not prove that the event was applied. An external overbooking remains `processed`, with a conflict recorded in the database.
+La première exécution sur une base fraîchement initialisée renvoie `200` avec `{"status":"processed"}` ; répéter cet événement renvoie `{"status":"duplicate"}`. Les autres résultats métier possibles sous HTTP `200` sont `stale`, `ignored` et `failed`. En particulier, une session inconnue produit actuellement `failed` avec HTTP `200` : le code HTTP seul ne prouve donc pas que l’événement a été appliqué. Une surréservation externe reste `processed`, avec un conflit enregistré en base.
 
-A missing or invalid signature returns `401`; invalid JSON or an invalid event envelope returns `400`; a method other than POST returns `405`. A missing secret, persistence failure, or SQL execution error returns `500`. Envelope validation does not fully validate `data`.
+Une signature absente ou incorrecte donne `401` ; un JSON ou une enveloppe d’événement invalide donne `400` ; une méthode autre que POST donne `405`. Un secret absent, une erreur de persistance ou une erreur d’exécution SQL donne `500`. La validation de l’enveloppe ne valide pas intégralement `data`.
 
-## Technical decisions
+## Décisions techniques
 
-### Source of truth and data model
+### Source de vérité et modèle de données
 
-PostgreSQL is the persistent source of truth. Supabase migrations create these tables:
+PostgreSQL constitue la source de vérité persistante. Les migrations Supabase créent les tables suivantes :
 
-- `slots`: Daisy slots and their local capacity;
-- `slot_partners`: partner publications and their synchronization state;
-- `bookings`: Daisy and Artisia bookings with their current status;
-- `webhook_events`: signed partner events protected by a unique identifier;
-- `sync_conflicts`: external overbooking conflicts requiring review by the workshop owner.
+- `slots` : les créneaux Daisy et leur capacité locale ;
+- `slot_partners` : les publications chez les partenaires et leur état de synchronisation ;
+- `bookings` : les réservations Daisy et Artisia avec leur statut actuel ;
+- `webhook_events` : les événements signés des partenaires, protégés par un identifiant unique ;
+- `sync_conflicts` : les conflits de surréservation externe nécessitant une vérification par le responsable de l’atelier.
 
-The PostgreSQL function `reserve_daisy_seats` locks the slot with `SELECT ... FOR UPDATE`. It checks partner synchronization and remaining capacity, then creates the local hold in the same transaction.
+La fonction PostgreSQL `reserve_daisy_seats` verrouille le créneau avec `SELECT ... FOR UPDATE`. Elle vérifie la synchronisation du partenaire et la capacité restante, puis crée le blocage local dans la même transaction.
 
-This lock prevents two simultaneous Daisy reservations from consuming the same seat.
+Ce verrou empêche deux réservations Daisy simultanées de consommer la même place.
 
-The in-memory `Store` illustrates the main business rules and supports fast unit tests. It does not exactly reproduce the Supabase implementation. The persistent flows described below correspond to the migrations and Edge Functions.
+Le modèle en mémoire `Store` illustre les principales règles métier et permet des tests unitaires rapides. Il ne reproduit pas exactement l’implémentation Supabase. Les parcours persistants décrits ci-dessous correspondent aux migrations et aux Edge Functions.
 
-### Code map and implementation differences
+### Organisation du code et différences entre les implémentations
 
-| Location | Role |
+| Emplacement | Rôle |
 | --- | --- |
-| `src/sync.ts` | Business prototype: bookings, webhooks, and manual reconciliation |
-| `src/store.ts` | In-memory state and a queue per slot |
-| `src/partner.ts` | Partner contract and in-memory mock |
-| `src/types.ts` | Prototype types |
-| `supabase/migrations/` | Tables, constraints, and transactional operations; `0004` replaces the reservation function from `0002` |
-| `supabase/functions/` | HTTP entry points and partner calls |
-| `scripts/artisia-mock.mjs` | HTTP mock used by integration tests |
-| `tests/` | Tests for the prototype and persistent flows |
+| `src/sync.ts` | Prototype métier : réservations, webhooks et rapprochement manuel |
+| `src/store.ts` | État en mémoire et file d’attente par créneau |
+| `src/partner.ts` | Contrat partenaire et simulation en mémoire |
+| `src/types.ts` | Types du prototype |
+| `supabase/migrations/` | Tables, contraintes et opérations transactionnelles ; `0004` remplace la fonction de réservation de `0002` |
+| `supabase/functions/` | Points d’entrée HTTP et appels au partenaire |
+| `scripts/artisia-mock.mjs` | Serveur HTTP simulé utilisé par les tests d’intégration |
+| `tests/` | Tests du prototype et des parcours persistants |
 
-| Situation | In-memory prototype | Supabase implementation |
+| Situation | Prototype en mémoire | Implémentation Supabase |
 | --- | --- | --- |
-| Artisia rejects with `409` | Deletes the booking and throws an error | Keeps the booking as `cancelled`, returns `409` |
-| Ambiguous partner result | Keeps `uncertain` and throws an error | Keeps `uncertain`, returns `202` |
-| External booking exceeds capacity | Records a conflict without inserting the external booking | Inserts the `confirmed` booking, then records the conflict |
-| Locking | Limited to one `Store` instance; held during the partner call | PostgreSQL lock during the local hold transaction; HTTP call happens afterward |
-| `session.updated` | Records the event without updating the publication | Updates the publication fields supplied in the webhook |
-| Reconciliation | Manually callable `reconcile()` method | No reconciliation worker or endpoint |
+| Refus d’Artisia avec `409` | Supprime la réservation et lève une erreur | Conserve la réservation en `cancelled`, renvoie `409` |
+| Résultat partenaire ambigu | Conserve `uncertain` et lève une erreur | Conserve `uncertain`, renvoie `202` |
+| Réservation externe dépassant la capacité | Enregistre un conflit sans insérer la réservation externe | Insère la réservation `confirmed`, puis enregistre le conflit |
+| Verrouillage | Limité à une instance de `Store` ; maintenu pendant l’appel partenaire | Verrou PostgreSQL pendant la transaction de blocage local ; l’appel HTTP intervient ensuite |
+| `session.updated` | Enregistre l’événement sans mettre à jour la publication | Actualise les champs de publication fournis dans le webhook |
+| Rapprochement | Méthode `reconcile()` appelable manuellement | Aucun traitement en arrière-plan ni point d’entrée de rapprochement |
 
-Prototype tests alone do not validate PostgreSQL guarantees: both integration suites must also run.
+Les tests du prototype ne suffisent pas à valider les garanties PostgreSQL : les deux suites d’intégration doivent également être exécutées.
 
-### Two customers book the last seat simultaneously
+### Deux clients réservent la dernière place simultanément
 
-When both reservations originate in Daisy, PostgreSQL processes them sequentially using the slot lock.
+Lorsque les deux réservations proviennent de Daisy, PostgreSQL les traite successivement grâce au verrou sur le créneau.
 
-The first request holds the last seat with a `pending` booking. The second waits for that transaction to finish, sees no remaining capacity, and is rejected before calling Artisia.
+La première demande bloque la dernière place avec une réservation `pending`. La seconde attend la fin de cette transaction, constate qu’il ne reste plus de place et est refusée avant tout appel à Artisia.
 
-The scenario is more complex when one customer books in Daisy while another books directly through Artisia:
+Le scénario est plus complexe lorsqu’un client réserve dans Daisy pendant qu’un autre réserve directement chez Artisia :
 
-1. Daisy checks local availability and holds the last seat as `pending`.
-2. At the same time, Artisia sells that seat through its own platform.
-3. Both operations can succeed because the platforms share neither a distributed transaction nor a common lock.
-4. Daisy then receives the webhook confirming the direct Artisia booking.
-5. Daisy stores that external booking as `confirmed`, reflecting a sale already accepted by the partner.
-6. The system detects that total booked seats exceed capacity.
-7. It records a `sync_conflict`, changes synchronization to `needs_review`, and blocks new sales for the slot.
-8. The workshop owner must determine which booking can be moved or cancelled. A dedicated conflict review interface remains outside this exercise's scope.
+1. Daisy vérifie sa disponibilité locale et bloque la dernière place en `pending`.
+2. Au même moment, Artisia vend cette place depuis sa propre plateforme.
+3. Les deux opérations peuvent réussir, car les plateformes ne partagent ni transaction distribuée ni verrou commun.
+4. Daisy reçoit ensuite le webhook confirmant la réservation directe chez Artisia.
+5. Daisy enregistre cette réservation externe en `confirmed`, car elle représente une vente déjà acceptée par le partenaire.
+6. Le système détecte que le total des places réservées dépasse la capacité.
+7. Il crée un `sync_conflict`, passe la synchronisation à `needs_review` et bloque les nouvelles ventes sur ce créneau.
+8. Le responsable de l’atelier doit déterminer quelle réservation peut être déplacée ou annulée. Une interface dédiée à la vérification des conflits reste hors du périmètre de l’exercice.
 
-Overbooking can therefore occur when the two platforms sell the same last seat before exchanging their updated state. Without a shared reservation or concurrency mechanism supplied by Artisia, Daisy alone cannot guarantee that this never happens. An idempotency key would prevent duplicate requests, but would not by itself coordinate independent sales across platforms.
+Une surréservation peut donc survenir lorsque les deux plateformes vendent la même dernière place avant d’avoir échangé leur nouvel état. Sans mécanisme partagé de réservation ou de gestion de la concurrence fourni par Artisia, Daisy ne peut pas garantir seule que cela n’arrivera jamais. Une clé d’idempotence empêcherait les requêtes en double, mais ne coordonnerait pas à elle seule les ventes indépendantes des deux plateformes.
 
-I chose a conservative policy:
+J’ai choisi une politique prudente :
 
-1. Daisy holds seats locally before calling the partner.
-2. The outgoing Daisy booking becomes `confirmed` only when Artisia returns `201`.
-3. An Artisia `409` cancels the local booking and informs the customer that the slot is no longer available.
-4. A timeout or `500` does not trigger an automatic retry of the non-idempotent POST. The booking stays `uncertain`, seats remain held, and synchronization becomes `needs_review`.
-5. An external webhook that causes overbooking records the partner's accepted sale, creates a conflict, and stops new sales.
+1. Daisy bloque les places localement avant d’appeler le partenaire.
+2. La réservation Daisy transmise au partenaire passe en `confirmed` uniquement lorsqu’Artisia renvoie `201`.
+3. Un `409` d’Artisia annule la réservation locale et informe le client que le créneau n’est plus disponible.
+4. Un dépassement du délai d’attente ou un `500` ne déclenche aucune nouvelle tentative automatique du POST non idempotent. La réservation reste `uncertain`, les places restent bloquées et la synchronisation passe à `needs_review`.
+5. Un webhook externe provoquant une surréservation entraîne l’enregistrement de la vente acceptée par le partenaire, la création d’un conflit et l’arrêt des nouvelles ventes.
 
-This policy reduces overbooking risk and suspends new sales as soon as uncertainty is detected. It does not eliminate the race between independent platforms. The stored synchronization state makes the issue available for review; displaying it to the workshop owner requires the planned interface. Holding capacity can lose a sale, but avoids silently confirming an uncertain booking.
+Cette politique réduit le risque de surréservation et suspend les nouvelles ventes dès qu’une incertitude est détectée. Elle n’élimine pas la concurrence entre plateformes indépendantes. L’état de synchronisation enregistré permet une vérification ; son affichage au responsable de l’atelier nécessite l’interface prévue. Bloquer des places peut faire perdre une vente, mais évite de confirmer silencieusement une réservation incertaine.
 
-### Artisia is unreachable for 20 minutes
+### Artisia reste injoignable pendant 20 minutes
 
-When Artisia does not respond, Daisy cannot tell whether the request failed or the partner created the booking before the connection was lost.
+Lorsqu’Artisia ne répond pas, Daisy ne sait pas si la demande a échoué ou si le partenaire a créé la réservation avant la perte de connexion.
 
-The booking becomes `uncertain`. Its seats remain held to prevent resale, and synchronization becomes `needs_review`.
+La réservation passe en `uncertain`. Ses places restent bloquées pour empêcher leur revente, et la synchronisation passe à `needs_review`.
 
-During this period:
+Pendant cette période :
 
-- existing confirmed bookings remain stored;
-- the stored synchronization state indicates that review is needed;
-- new sales for the affected slot are suspended;
-- the customer receives `202 Accepted`, indicating that the request is awaiting verification.
+- les réservations déjà confirmées restent enregistrées ;
+- l’état de synchronisation enregistré indique qu’une vérification est nécessaire ;
+- les nouvelles ventes sur le créneau concerné sont suspendues ;
+- le client reçoit `202 Accepted`, indiquant que sa demande est en attente de vérification.
 
-Daisy does not automatically retry booking creation. Artisia's booking POST is not idempotent, so another attempt could create a second booking if the first succeeded without returning a response.
+Daisy ne relance pas automatiquement la création de réservation. Le POST de réservation d’Artisia n’est pas idempotent : une nouvelle tentative pourrait créer une deuxième réservation si la première avait réussi sans renvoyer de réponse.
 
-The planned recovery process calls `GET /sessions` and compares Artisia's aggregate booked seats with Daisy's known bookings.
+Le processus de reprise prévu appelle `GET /sessions` et compare le nombre total de places réservées chez Artisia avec les réservations connues de Daisy.
 
-If the totals match, the prototype restores `healthy` and confirms the slot's `uncertain` bookings. If they differ, it keeps `needs_review`. Creating a `sync_conflict` during reconciliation is not implemented; current persistent conflicts are created when webhooks reveal overbooking.
+Si les totaux correspondent, le prototype rétablit `healthy` et confirme les réservations `uncertain` du créneau. S’ils diffèrent, il conserve `needs_review`. La création d’un `sync_conflict` pendant le rapprochement n’est pas implémentée ; les conflits persistants actuels sont créés lorsque les webhooks révèlent une surréservation.
 
-An aggregate total cannot reliably identify individual bookings. Matching totals do not prove which bookings succeeded, and the prototype does not close existing conflicts. This simplified reconciliation is covered by business model tests but is insufficient for reliable production recovery.
+Un total agrégé ne permet pas d’identifier de manière fiable les réservations individuelles. Des totaux identiques ne prouvent pas quelles réservations ont réussi, et le prototype ne clôture pas les conflits existants. Ce rapprochement simplifié est couvert par les tests du modèle métier, mais reste insuffisant pour une reprise fiable en production.
 
-There is no scheduled background reconciliation in this exercise. In production, a worker would run it with spaced attempts, a rate below 60 requests per minute, and an alert when a slot remains in `needs_review` too long.
+L’exercice ne contient aucun rapprochement planifié en arrière-plan. En production, un processus dédié l’exécuterait avec des tentatives espacées, une fréquence inférieure à 60 requêtes par minute et une alerte lorsqu’un créneau reste trop longtemps en `needs_review`.
 
-### Duplicate or out-of-order webhooks
+### Webhooks reçus plusieurs fois ou dans le désordre
 
-Before processing, the Edge Function verifies the HMAC signature against the raw request body and the shared Artisia secret. An invalid signature returns `401` without storing an event.
+Avant le traitement, l’Edge Function vérifie la signature HMAC à partir du corps brut de la requête et du secret partagé avec Artisia. Une signature incorrecte renvoie `401` sans enregistrer d’événement.
 
-Valid events are stored in `webhook_events`. The unique constraint on `(partner, event_id)` prevents the same event from being stored twice, including concurrent duplicate deliveries.
+Les événements valides sont stockés dans `webhook_events`. La contrainte unique sur `(partner, event_id)` empêche le stockage d’un même événement plusieurs fois, y compris lors de réceptions simultanées en double.
 
-When an already handled event arrives again, Daisy returns HTTP `200` with `duplicate`, acknowledging delivery without applying a second business effect.
+Lorsqu’un événement déjà traité arrive de nouveau, Daisy renvoie HTTP `200` avec `duplicate`, accusant réception sans appliquer une seconde fois l’effet métier.
 
-A second protection checks the Artisia booking identifier. The unique constraint on `(source, source_booking_id)` and the check before insertion prevent duplicate Artisia records for the same external booking.
+Une deuxième protection vérifie l’identifiant de réservation Artisia. La contrainte unique sur `(source, source_booking_id)` et la vérification avant insertion empêchent la création de plusieurs enregistrements Artisia pour une même réservation externe.
 
-For event ordering, the PostgreSQL function looks up the latest handled `occurred_at` for the same Artisia booking. An incoming event with an older or equal timestamp becomes `stale` and does not change the booking.
+Pour l’ordre des événements, la fonction PostgreSQL recherche le dernier `occurred_at` traité pour la même réservation Artisia. Un événement entrant avec un horodatage antérieur ou égal passe en `stale` et ne modifie pas la réservation.
 
-For example, if Daisy has handled a cancellation at `14:05` and later receives a creation event from `14:02`, the booking remains cancelled. Business event time is used instead of request arrival order.
+Par exemple, si Daisy a traité une annulation à `14:05` puis reçoit un événement de création datant de `14:02`, la réservation reste annulée. L’heure métier de l’événement est utilisée à la place de l’ordre d’arrivée des requêtes.
 
-The cost of this idempotency mechanism is limited:
+Le coût de ce mécanisme d’idempotence est limité :
 
-- one stored row per unique webhook event;
-- two unique constraints and their indexes;
-- a lookup for the latest handled event before applying a change;
-- a future archival or deletion policy as the event table grows.
+- une ligne enregistrée par événement webhook unique ;
+- deux contraintes uniques et leurs index ;
+- une recherche du dernier événement traité avant d’appliquer une modification ;
+- une politique d’archivage ou de suppression à prévoir lorsque la table d’événements grossit.
 
-This cost is justified by avoiding duplicate reservations or repeated cancellation effects.
+Ce coût se justifie par la prévention des réservations en double et des effets d’annulation répétés.
 
-### Why I do not automatically retry the booking POST
+### Pourquoi je ne relance pas automatiquement le POST de réservation
 
-Artisia's booking creation endpoint is not idempotent. Two identical requests can create two different bookings.
+Le point d’entrée de création de réservation d’Artisia n’est pas idempotent. Deux requêtes identiques peuvent créer deux réservations différentes.
 
-A `409` explicitly rejects the request, so Daisy changes the local booking to `cancelled` and releases its seats.
+Un `409` refuse explicitement la demande : Daisy passe donc la réservation locale en `cancelled` et libère ses places.
 
-A timeout or `500` is ambiguous: Artisia may have created the booking before the connection failed or an error occurred while returning the response. Repeating the request could create another booking.
+Un dépassement du délai d’attente ou un `500` reste ambigu : Artisia peut avoir créé la réservation avant la perte de connexion ou une erreur lors de la réponse. Répéter la requête pourrait créer une autre réservation.
 
-In this situation, Daisy:
+Dans cette situation, Daisy :
 
-1. does not retry the POST;
-2. keeps the local booking as `uncertain`;
-3. continues holding its seats;
-4. sets synchronization to `needs_review`;
-5. tells the customer that the request requires verification.
+1. ne relance pas le POST ;
+2. conserve la réservation locale en `uncertain` ;
+3. maintient ses places bloquées ;
+4. passe la synchronisation à `needs_review` ;
+5. informe le client que sa demande nécessite une vérification.
 
-Subsequent reconciliation is a planned persistent recovery step. Automatic confirmation emails and a full recovery workflow are not implemented.
+Le rapprochement ultérieur est une étape prévue de reprise du système persistant. Les courriels de confirmation automatiques et le parcours complet de reprise ne sont pas implémentés.
 
-## Exercise scope
+## Périmètre de l’exercice
 
-### Implemented
+### Éléments implémentés
 
-- A persistent PostgreSQL schema with constraints.
-- Atomic local seat reservation using a slot lock.
-- An Edge Function that creates a Daisy booking and submits it to Artisia.
-- An Edge Function that receives and verifies signed Artisia webhooks.
-- Duplicate webhook protection and timestamp-based event ordering checks.
-- Booking statuses: `pending`, `confirmed`, `cancelled`, and `uncertain`.
-- Synchronization states used by the flows: `healthy` and `needs_review`.
-- External overbooking detection and conflict recording.
-- Blocking new sales when partner state is uncertain.
-- An Artisia HTTP mock simulating `201`, `409`, `500`, and timeouts.
-- Reproducible local data through `seed.sql`.
-- Nine fast business logic tests.
-- Sixteen integration tests across booking and webhook flows.
+- Un schéma PostgreSQL persistant avec ses contraintes.
+- La réservation locale atomique des places grâce à un verrou sur le créneau.
+- Une Edge Function qui crée une réservation Daisy et la transmet à Artisia.
+- Une Edge Function qui reçoit et vérifie les webhooks signés d’Artisia.
+- La protection contre les webhooks en double et les vérifications d’ordre fondées sur l’horodatage.
+- Les statuts de réservation : `pending`, `confirmed`, `cancelled` et `uncertain`.
+- Les états de synchronisation utilisés par les parcours : `healthy` et `needs_review`.
+- La détection des surréservations externes et l’enregistrement des conflits.
+- Le blocage des nouvelles ventes lorsque l’état du partenaire est incertain.
+- Un serveur HTTP Artisia simulant `201`, `409`, `500` et les dépassements du délai d’attente.
+- Des données locales reproductibles grâce à `seed.sql`.
+- Neuf tests rapides de la logique métier.
+- Seize tests d’intégration couvrant les parcours de réservation et les webhooks.
 
-### Intentionally outside scope
+### Éléments volontairement hors périmètre
 
-- A Next.js user interface.
-- An automatic background reconciliation worker.
-- A production queue for outgoing synchronization.
-- Encrypted storage of a separate Artisia key for each workshop.
-- Actual delivery of customer confirmation emails.
-- An interface for workshop owners to inspect and resolve conflicts.
-- Fully automatic resolution when Artisia provides only aggregate booking counts.
+- Une interface utilisateur Next.js.
+- Un processus de rapprochement automatique en arrière-plan.
+- Une file d’attente de production pour la synchronisation sortante.
+- Le stockage chiffré d’une clé Artisia distincte pour chaque atelier.
+- L’envoi réel des courriels de confirmation aux clients.
+- Une interface permettant aux responsables d’atelier de consulter et de résoudre les conflits.
+- La résolution entièrement automatique lorsqu’Artisia ne fournit que des totaux agrégés de réservations.
 
-These are possible product and technical extensions. The exercise focuses on synchronization rules and failures that could lead to overbooking.
+Ces éléments constituent des évolutions produit et techniques possibles. L’exercice se concentre sur les règles de synchronisation et les défaillances susceptibles de provoquer une surréservation.
 
-## Automated verification
+## Vérification automatisée
 
-See [scenario coverage](docs/scenario-coverage.md) for the tested behaviors and remaining limitations.
+Consulter le [tableau de couverture des scénarios](docs/scenario-coverage.md) pour connaître les comportements testés et les limites restantes.
 
-Run the fast in-memory business logic tests:
+Exécuter les tests rapides de la logique métier en mémoire :
 
 ```bash
 npm test
 ```
 
-Run booking integration tests, which reset Supabase and exercise PostgreSQL, the Edge Function, and the Artisia HTTP mock:
+Exécuter les tests d’intégration de réservation, qui réinitialisent Supabase et vérifient PostgreSQL, l’Edge Function et le serveur HTTP Artisia simulé :
 
 ```bash
 npm run test:integration
 ```
 
-Run webhook integration tests for signatures, duplicates, ordering, and external conflicts:
+Exécuter les tests d’intégration des webhooks pour les signatures, les doublons, l’ordre des événements et les conflits externes :
 
 ```bash
 npm run test:webhook
 ```
 
-Check TypeScript without generating files:
+Vérifier TypeScript sans générer de fichiers :
 
 ```bash
 npm run typecheck
 ```
 
-Coverage includes:
+La couverture comprend notamment :
 
-- simultaneous Daisy requests for the last seat;
-- confirmation after an Artisia `201`;
-- rejection after an Artisia `409`;
-- an ambiguous `500` response;
-- a timeout without an automatic retry;
-- valid and invalid HMAC signatures;
-- duplicate webhook delivery;
-- an older event arriving after a newer one;
-- an external booking that exceeds slot capacity;
-- blocking new sales when the partner requires review.
+- les demandes Daisy simultanées pour la dernière place ;
+- la confirmation après un `201` d’Artisia ;
+- le refus après un `409` d’Artisia ;
+- une réponse ambiguë `500` ;
+- un dépassement du délai d’attente sans nouvelle tentative automatique ;
+- les signatures HMAC valides et invalides ;
+- les réceptions de webhooks en double ;
+- un événement ancien reçu après un événement plus récent ;
+- une réservation externe dépassant la capacité du créneau ;
+- le blocage des nouvelles ventes lorsque le partenaire nécessite une vérification.
 
-## Planned production improvements
+## Améliorations prévues pour la production
 
-I would keep PostgreSQL as the source of truth and progressively add:
+Je conserverais PostgreSQL comme source de vérité et j’ajouterais progressivement :
 
-- an outbox table to persist outgoing synchronization work reliably;
-- a reconciliation worker for partner errors and outages;
-- retries with progressive backoff for operations that are safe to replay;
-- encryption for workshop-specific API keys;
-- structured logs tracing each booking and webhook;
-- alerts for bookings that remain `uncertain` too long;
-- a workshop interface showing `healthy`, `degraded`, and `needs_review`;
-- an action for the workshop owner to resolve or close a conflict.
+- une table d’envoi différé, ou *outbox*, pour enregistrer de manière fiable les opérations de synchronisation sortante ;
+- un processus de rapprochement pour les erreurs et les interruptions du partenaire ;
+- des nouvelles tentatives avec un délai croissant pour les opérations pouvant être rejouées sans risque ;
+- le chiffrement des clés API propres à chaque atelier ;
+- des journaux structurés retraçant chaque réservation et chaque webhook ;
+- des alertes pour les réservations restant trop longtemps en `uncertain` ;
+- une interface atelier affichant `healthy`, `degraded` et `needs_review` ;
+- une action permettant au responsable de l’atelier de résoudre ou de clôturer un conflit.
 
-Key monitoring metrics would include:
+Les principaux indicateurs à surveiller seraient :
 
-- the count and age of `uncertain` bookings;
-- the booking conflict rate;
-- discrepancies detected during reconciliation;
-- duplicate webhook deliveries;
-- partner response times and error rates;
-- how long each slot remains in `needs_review`.
+- le nombre et l’ancienneté des réservations `uncertain` ;
+- le taux de conflits de réservation ;
+- les écarts détectés pendant le rapprochement ;
+- les réceptions de webhooks en double ;
+- les temps de réponse et les taux d’erreur du partenaire ;
+- la durée pendant laquelle chaque créneau reste en `needs_review`.
 
-These metrics would help detect partner degradation and assess its impact on workshop sales.
+Ces indicateurs aideraient à détecter une dégradation du partenaire et à évaluer son impact sur les ventes des ateliers.

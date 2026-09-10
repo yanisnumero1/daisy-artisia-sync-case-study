@@ -195,33 +195,33 @@ returns void language sql security invoker set search_path = public as $$
 $$;
 create function public.reconcile_artisia_session(p_session jsonb, p_version bigint)
 returns text language plpgsql security invoker set search_path = public as $$
-declare s public.slots; known integer; ambiguous boolean; reason text;
+declare s public.slots; known integer; ambiguous boolean; v_reason text;
 begin
   select slots.* into s from public.slots slots join public.slot_partners sp on sp.slot_id = slots.id
   where sp.partner = 'artisia' and sp.partner_session_id = p_session->>'session_id' for update of slots;
   if not found then return 'unmapped'; end if;
-  if s.sync_version <> p_version then return 'deferred'; end if;
+  if p_version is null or s.sync_version <> p_version then return 'deferred'; end if;
   if exists (select 1 from public.webhook_events where partner = 'artisia' and status in ('processed', 'ignored')
     and payload #>> '{data,session_id}' = p_session->>'session_id'
     and occurred_at > (p_session->>'updated_at')::timestamptz) then return 'deferred'; end if;
   select coalesce(sum(seats),0), coalesce(bool_or(status in ('pending','uncertain')), false)
   into known, ambiguous from public.bookings where slot_id = s.id and status <> 'cancelled';
-  if ambiguous then reason := 'uncertain_booking';
+  if ambiguous then v_reason := 'uncertain_booking';
   elsif known <> (p_session->>'booked')::integer or s.capacity <> (p_session->>'capacity')::integer
-    or p_session->>'status' = 'cancelled' then reason := 'aggregate_discrepancy'; end if;
-  if reason is not null then
-    perform public.record_sync_issue(s.id, 'reconcile:' || (p_session->>'session_id'), reason);
+    or p_session->>'status' = 'cancelled' then v_reason := 'aggregate_discrepancy'; end if;
+  if v_reason is not null then
+    perform public.record_sync_issue(s.id, 'reconcile:' || (p_session->>'session_id'), v_reason);
   else
     update public.sync_conflicts set resolved_at = now() where slot_id = s.id
     and reason in ('aggregate_discrepancy', 'uncertain_booking') and resolved_at is null;
   end if;
   update public.slot_partners set last_known_capacity = (p_session->>'capacity')::integer,
     last_known_booked = (p_session->>'booked')::integer, last_synced_at = now(), status = p_session->>'status',
-    sync_status = case when reason is not null or s.status <> 'published' or known > s.capacity
+    sync_status = case when v_reason is not null or s.status <> 'published' or known > s.capacity
       or exists (select 1 from public.sync_conflicts where slot_id = s.id and resolved_at is null)
       then 'needs_review' else 'healthy' end
   where slot_id = s.id and partner = 'artisia';
-  return case when reason is null then 'checked' else 'needs_review' end;
+  return case when v_reason is null then 'checked' else 'needs_review' end;
 end;
 $$;
 
